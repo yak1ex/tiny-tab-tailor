@@ -1,0 +1,10 @@
+schema_version: 1
+source: https://github.com/yak1ex/agentic-coding-templates
+base_release: "2025-01-19"
+base_revision: "main"
+adopted_at: "2026-10-01"
+last_reviewed_revision: "main"
+components:
+  - base/AGENTS.md
+  - base/TASKS.md
+  - stacks/typescript-node.md
