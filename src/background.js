@@ -1,86 +1,56 @@
 "use strict";
 
-const IGNORED_PROTOCOLS = ["chrome:", "chrome-extension:", "about:", "edge:"];
-
-function shouldIgnoreUrl(url) {
-  if (!url) return true;
-  try {
-    const parsed = new URL(url);
-    return IGNORED_PROTOCOLS.includes(parsed.protocol);
-  } catch {
-    return true;
-  }
-}
+import {
+  shouldIgnoreUrl,
+  collectRemovals,
+  keeperForUrl,
+} from "./dedup.js";
 
 async function getAllTabs() {
   return chrome.tabs.query({});
 }
 
-function groupTabsByUrl(tabs) {
-  const groups = new Map();
-  for (const tab of tabs) {
-    if (shouldIgnoreUrl(tab.url)) continue;
-    if (!groups.has(tab.url)) {
-      groups.set(tab.url, []);
-    }
-    groups.get(tab.url).push(tab);
-  }
-  return groups;
-}
-
-function findDuplicates(groups) {
-  const duplicates = [];
-  for (const [url, tabs] of groups) {
-    if (tabs.length > 1) {
-      const sorted = tabs.sort((a, b) => (a.id - b.id));
-      const [keep, ...toRemove] = sorted;
-      duplicates.push({ url, keep, toRemove });
-    }
-  }
-  return duplicates;
-}
-
 async function closeDuplicateTabs() {
-  const tabs = await getAllTabs();
-  const groups = groupTabsByUrl(tabs);
-  const duplicates = findDuplicates(groups);
-
-  const tabIdsToRemove = duplicates.flatMap(d => d.toRemove.map(t => t.id));
-
+  const { duplicates, tabIdsToRemove } = collectRemovals(await getAllTabs());
   if (tabIdsToRemove.length > 0) {
     await chrome.tabs.remove(tabIdsToRemove);
   }
-
   return { closedCount: tabIdsToRemove.length, duplicateGroups: duplicates.length };
 }
 
-async function handleNewTab(tab) {
-  if (shouldIgnoreUrl(tab.url)) return;
-  if (!tab.url) return;
+async function handleTabUrl(tab, url) {
+  if (shouldIgnoreUrl(url)) return;
 
-  const allTabs = await getAllTabs();
-  const existingTab = allTabs.find(t =>
-    t.id !== tab.id &&
-    t.url === tab.url &&
-    !shouldIgnoreUrl(t.url)
-  );
+  const keeper = keeperForUrl(await getAllTabs(), url);
+  if (!keeper || keeper.id === tab.id) return;
 
-  if (existingTab) {
-    await chrome.tabs.remove(tab.id);
-    await chrome.tabs.update(existingTab.id, { active: true });
-    await chrome.windows.update(existingTab.windowId, { focused: true });
+  const wasActive = tab.active === true;
+  await chrome.tabs.remove(tab.id);
+  if (wasActive) {
+    await chrome.tabs.update(keeper.id, { active: true });
+    await chrome.windows.update(keeper.windowId, { focused: true });
   }
+}
+
+function flashBadge(count) {
+  chrome.action.setBadgeBackgroundColor({ color: "#1a73e8" });
+  chrome.action.setBadgeText({ text: String(count) });
+  setTimeout(() => chrome.action.setBadgeText({ text: "" }), 3000);
 }
 
 chrome.action.onClicked.addListener(async () => {
   const result = await closeDuplicateTabs();
-  console.log(`TinyTabTailor: Closed ${result.closedCount} duplicate tabs in ${result.duplicateGroups} groups`);
+  flashBadge(result.closedCount);
+  console.log(
+    `TinyTabTailor: closed ${result.closedCount} duplicate tabs in ${result.duplicateGroups} groups`
+  );
 });
 
-chrome.tabs.onCreated.addListener(async (tab) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (!changeInfo.url) return;
   try {
-    await handleNewTab(tab);
+    await handleTabUrl(tab, changeInfo.url);
   } catch (error) {
-    console.error("TinyTabTailor: Error handling new tab:", error);
+    console.error("TinyTabTailor: error handling tab:", error);
   }
 });

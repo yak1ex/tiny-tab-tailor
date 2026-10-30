@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "description": "A tiny Chrome extension to avoid duplicated tabs",
   "private": true,
+  "type": "module",
   "scripts": {
     "lint": "echo \"No lint configured\" && exit 0",
-    "test": "echo \"No tests configured\" && exit 0",
+    "test": "node --test",
     "build": "echo \"No build step required\" && exit 0"
   },
   "license": "MIT"
