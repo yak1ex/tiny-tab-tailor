@@ -13,7 +13,7 @@ TinyTabTailor is a tiny Chrome extension to avoid duplicated tabs. It provides t
 
 ## Current status
 
-All three planned tasks (T001–T003) are completed and verified. New work (T004) is in progress: an auto-dedup on/off checkbox in the toolbar icon's right-click (`contextMenus` "action") menu, with state in `chrome.storage.session` (re-enabled on browser restart); left-click dedup (T002) is unchanged. Implemented and static-checked; awaiting user verification in Chrome. Scenario-3 policy was set to P1 (existing-tab navigations are deduped like new tabs; recover via Ctrl+Shift+T + Ctrl+click if a duplicate close is unwanted).
+All accepted tasks are completed and user-verified in Chrome. T001–T003 core behavior, T004 auto-dedup toggle (action right-click checkbox, `chrome.storage.session` state) — all reproduced by the user after a full Chrome restart, including re-enabled auto-dedup and manual close while paused. The keeper nuance observed on 2026-11-12 (same-tab navigation from the oldest tab keeps both duplicates) was triaged as C007 and resolved by documenting it as intended behavior (D008). Remaining work: optional candidates C001/C002/C003 await triage.
 
 ## Current plan
 
@@ -37,14 +37,14 @@ This ordered list expresses the agreed execution order. Task IDs provide stable 
 4. `T004` — Add auto-dedup enable/disable toggle in the action right-click menu
 
 - Selection basis: Accepted candidate C005 (intentional-duplicate presentation workflow needs a way to pause auto-dedup)
-- Last reviewed: 2026-11-11
+- Last reviewed: 2026-11-12
 
 ## Active work
 
-- Task: `T004`
-- Current step: Toggle implemented (action checkbox menu + `chrome.storage.session` flag gating `onUpdated`); `node --check` and `npm test` pass. Not yet run in Chrome.
+- Task: `none`
+- Current step: All accepted tasks (T001–T004) are completed and user-verified, including behavior after a full Chrome restart. C007 resolved via D008 (documentation, no code change). No agent-actionable task remains.
 - Waiting on: `user`
-- Required action: Reload the extension in Chrome and verify: (1) right-clicking the toolbar icon shows an "Automatically close duplicate tabs" checkbox; (2) unchecking it lets duplicate tabs (including native "タブを複製") survive; (3) left-click still closes duplicates while unchecked and the count badge appears; (4) rechecking restores auto-closing; (5) after a full browser restart the checkbox is checked again.
+- Required action: Choose the next candidate to accept — `C001` (fuzzy URL matching), `C002` (settings UI), `C003` (user- vs JS-initiated opens) — or declare the project complete.
 
 ## Tasks
 
@@ -129,10 +129,11 @@ Use stable IDs. Append newly accepted work using the next unused ID. Never reuse
   - `chrome.tabs.onCreated` cannot be used for URL matching (URL not yet set); see D004
   - Background duplicates closing silently was accepted over focus-stealing redirect; see D006
   - Cannot reliably distinguish user-initiated from JS-initiated tab opens (see C003)
+  - Observed by the user (2026-11-12): a same-tab navigation from the oldest (lowest-id) tab to a URL a newer tab already holds keeps both tabs, because the navigating tab itself is the keeper (`keeper.id === tab.id` short-circuit); see C007
 
 ### T004 — Add auto-dedup enable/disable toggle in the action right-click menu
 
-- Status: in progress
+- Status: completed
 - Objective: Let the user pause automatic dedup (e.g., to clone tabs intentionally for a presentation) without a keyboard shortcut or popup, while keeping the left-click close behavior unchanged.
 - Scope:
   - Checkbox menu item ("Automatically close duplicate tabs") in the toolbar icon's right-click menu (`contextMenus` context `action`)
@@ -151,12 +152,13 @@ Use stable IDs. Append newly accepted work using the next unused ID. Never reuse
 - Verification:
   - `npm test`: 8/8 unit tests pass (T001 logic unchanged).
   - `node --check` passes on `src/background.js`. `npm run lint` is a no-op placeholder.
-  - Not yet run in Chrome.
+  - User live-verified in Chrome (2026-11-12): right-click menu shows the checkbox item; each selection flips the checkbox; unchecked, native "Clone tab" works, multiple Ctrl+click opens survive, and typing an existing URL stays in the new tab; left-click closes duplicates and shows the count badge even while unchecked; re-checked, clone/Ctrl+click/typed duplicates close as in T003; duplicates created while unchecked are NOT auto-closed on re-check and are closed by the next left-click.
+  - Reproduced in full after a complete Chrome restart, including the checked-state auto-closing behaviors — confirming criterion 5 (toggle re-enabled on browser startup).
 - Remaining:
-  - Awaiting user verification in Chrome per the listed acceptance criteria (first live confirmation that the `action`-context menu appears on right-click of the toolbar icon).
+  - None.
 - Notes:
   - Intentional-duplicate flow enabled by this task: uncheck → clone tabs (native "タブを複製") → collect for presentation → left-click closes duplicates → recheck (or leave unchecked)
-  - The `contextMenus` "action" context is documented by Chrome but its live behavior in the current Chrome version is unverified by this project
+  - The `contextMenus` "action" context confirmed working in the user's Chrome (menu appears on right-click of the toolbar icon alongside Chrome's built-in entries)
   - No persistent visual signal while paused (state only visible in the right-click menu); could be revisited if the forgotten-pause risk proves annoying
 
 ## Decisions
@@ -239,6 +241,17 @@ Record short project decisions that affect future implementation. Use a separate
   - Same-tab link clicks that land on an already-open URL close the reading tab; accepted trade-off.
   - A later switch to per-transition policies remains possible via C006.
 - Related tasks: `T003`
+
+### D008 — Keeper semantics: oldest-created instance wins on navigation
+
+- Date: 2026-11-12
+- Status: accepted
+- Decision: Document current behavior as intended: the auto-dedup keeper is the lowest tab id among tabs currently holding the URL. A same-tab navigation from the tab that is already the oldest instance of a URL closes nothing, even when a newer tab holds the same URL; both survive until a manual (left-click) close.
+- Rationale: User chose option A for C007 after confirming the mechanics. It is consistent with manual dedup's keep-oldest rule (T001) and avoids closing an older main working tab in favor of a newer duplicate elsewhere.
+- Consequences:
+  - Refines D007/P1: a navigating tab closes only when it is not the oldest instance of the URL; otherwise the duplicate is left for manual cleanup.
+  - C007 resolved as documented behavior; no code change.
+- Related tasks: `T001`, `T003`
 
 ## Blocked items
 
@@ -341,3 +354,14 @@ Items awaiting acceptance, prioritization, or feasibility analysis. They are not
 - Notes:
   - P3 would add the `webNavigation` permission; "block navigation in place" is not feasible in MV3
   - Revisit if unexpected same-tab closes prove annoying in practice
+
+### C007 — Keeper selection on same-tab navigation (oldest-wins vs already-at-URL)
+
+- Origin: User T004 verification session (2026-11-12): with auto-dedup checked, navigating to an already-open URL from the oldest tab kept both tabs, differing from the P1 assumption "close this tab and switch to the existing tab".
+- Question: Should the current semantics (keeper = lowest tab id among tabs at the URL, so an older navigating tab is never closed) be documented as intended (new decision), or changed so the navigating tab always closes when another tab already holds the URL?
+- Possible relationship: `T001`, `T003`, D004, D007, `C006`, `C001`
+- Disposition: accepted (2026-11-12) as documentation — resolved by D008 (oldest-created keeper is intended behavior); no implementation task created
+- Notes:
+  - Oldest-wins matches manual dedup (keeps lowest id) and is non-destructive to the working tab; the user called the observed behavior "not harmful even desirable"
+  - "Always close the navigating tab" would match the P1 assumption but can close an older main working tab and jump to a newer duplicate elsewhere
+  - Exact-match comparison (D003) is an alternative explanation for some observed non-closes; confirm with a controlled repro (older tab vs newer tab navigation to the same URL string) if B is considered
