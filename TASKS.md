@@ -13,7 +13,7 @@ TinyTabTailor is a tiny Chrome extension to avoid duplicated tabs. It provides t
 
 ## Current status
 
-Core dedup logic (T001) is implemented as a testable ES module (`src/dedup.js`) and verified with `npm test` (8/8 unit tests pass). Manual toolbar dedup (T002) and automatic dedup (T003) are wired into the service worker; the original `chrome.tabs.onCreated` race in T003 (tab `url` is empty at creation) was fixed by switching to `chrome.tabs.onUpdated`. The extension loads in Chrome and its icon renders (user-confirmed). T002 and T003 runtime behavior awaits user verification in Chrome.
+All three planned tasks (T001–T003) are completed and verified. New work (T004) is in progress: an auto-dedup on/off checkbox in the toolbar icon's right-click (`contextMenus` "action") menu, with state in `chrome.storage.session` (re-enabled on browser restart); left-click dedup (T002) is unchanged. Implemented and static-checked; awaiting user verification in Chrome. Scenario-3 policy was set to P1 (existing-tab navigations are deduped like new tabs; recover via Ctrl+Shift+T + Ctrl+click if a duplicate close is unwanted).
 
 ## Current plan
 
@@ -27,19 +27,24 @@ This ordered list expresses the agreed execution order. Task IDs provide stable 
 2. `T002` — Implement toolbar button for manual deduplication
 
 - Selection basis: User-facing trigger for feature 1
-- Last reviewed: 2026-10-22
+- Last reviewed: 2026-11-06
 
 3. `T003` — Implement automatic deduplication on new tab creation
 
 - Selection basis: Feature 2, depends on core logic from T001
-- Last reviewed: 2026-10-22
+- Last reviewed: 2026-11-06
+
+4. `T004` — Add auto-dedup enable/disable toggle in the action right-click menu
+
+- Selection basis: Accepted candidate C005 (intentional-duplicate presentation workflow needs a way to pause auto-dedup)
+- Last reviewed: 2026-11-11
 
 ## Active work
 
-- Task: `none`
-- Current step: T001 verified via unit tests. T002 and T003 are implemented in code and now waiting on user verification in Chrome, so no task is agent-actionable this cycle.
+- Task: `T004`
+- Current step: Toggle implemented (action checkbox menu + `chrome.storage.session` flag gating `onUpdated`); `node --check` and `npm test` pass. Not yet run in Chrome.
 - Waiting on: `user`
-- Required action: User reloads the extension in Chrome and verifies (T002) that clicking the toolbar button closes duplicates and shows a badge count, and (T003) that opening a duplicate tab redirects to the existing one without affecting `chrome://` tabs.
+- Required action: Reload the extension in Chrome and verify: (1) right-clicking the toolbar icon shows an "Automatically close duplicate tabs" checkbox; (2) unchecking it lets duplicate tabs (including native "タブを複製") survive; (3) left-click still closes duplicates while unchecked and the count badge appears; (4) rechecking restores auto-closing; (5) after a full browser restart the checkbox is checked again.
 
 ## Tasks
 
@@ -72,7 +77,7 @@ Use stable IDs. Append newly accepted work using the next unused ID. Never reuse
 
 ### T002 — Implement toolbar button for manual deduplication
 
-- Status: in progress
+- Status: completed
 - Objective: Add a toolbar button that triggers manual deduplication when clicked.
 - Scope:
   - Add action button to manifest
@@ -87,16 +92,16 @@ Use stable IDs. Append newly accepted work using the next unused ID. Never reuse
   - `chrome.action.onClicked` triggers `closeDuplicateTabs()`, which closes all non-oldest duplicates across all windows.
   - A badge flashes the closed-tab count for ~3s as feedback.
 - Verification:
-  - Not run in Chrome (UI/behavioral). Only `node --check` static parsing was done on `src/background.js`.
+  - User-verified in Chrome: with no duplicates, clicking the icon shows badge `0` as expected; after T003, with duplicates present, the badge shows the number of closed tabs, which equals (duplicated tabs − 1) per group, as expected.
 - Remaining:
-  - Awaiting user verification in Chrome: confirm the button closes duplicates and the badge shows the count.
+  - None.
 - Notes:
   - Use `chrome.action.onClicked` event
   - Badge feedback uses `chrome.action.setBadgeText`/`setBadgeBackgroundColor` with a `setTimeout` clear; the timer is best-effort (service worker may be terminated after 3s idle)
 
 ### T003 — Implement automatic deduplication on new tab creation
 
-- Status: in progress
+- Status: completed
 - Objective: Automatically detect and redirect new duplicate tabs to existing ones.
 - Scope:
   - Listen to `chrome.tabs.onCreated` event
@@ -104,20 +109,55 @@ Use stable IDs. Append newly accepted work using the next unused ID. Never reuse
   - If duplicate, close new tab and focus existing one
 - Acceptance criteria:
   - New tabs with duplicate URLs are automatically closed
-  - Existing tab is focused when duplicate is detected
+  - Existing tab is focused only when the duplicate was the foreground tab; background duplicates (e.g. Ctrl+click) close silently without stealing focus (user-accepted as option A)
   - No interference with `chrome://` and `chrome-extension://` URLs
 - Implemented:
   - Replaced the original `chrome.tabs.onCreated` handler (which never triggered because a freshly created tab has an empty `url` / only `pendingUrl`) with a `chrome.tabs.onUpdated` listener that acts on `changeInfo.url`.
   - On a duplicate URL, `keeperForUrl` keeps the oldest tab (lowest id); the newer tab is closed. The keeper is focused only when the closed tab was active, so background duplicates close silently without stealing focus.
   - Reuses `shouldIgnoreUrl`, so `chrome://`/`chrome-extension://`/`about:` tabs are never touched.
 - Verification:
-  - Core grouping/keep-oldest logic is covered by T001 unit tests. The event wiring itself was not run (requires Chrome); only `node --check` static parsing was done.
+  - Core grouping/keep-oldest logic is covered by T001 unit tests; event wiring passes `node --check`.
+  - User-verified in Chrome:
+    - "Clone tab" (native tab context menu) on an existing tab: the duplicate closes immediately and focus returns to the original tab — working as designed (this motivated candidate C004 for intentional duplicates).
+    - Ctrl+click a link whose URL is already open: the new background tab closes immediately; focus stays on the page the link was clicked from (accepted behavior; matches D006).
+    - Typing an already-open URL in a new (foreground) tab: the new tab closes and Chrome switches to the existing tab.
+    - `chrome://about/` and `chrome://extensions` can still be opened in multiple tabs — privileged URLs unaffected.
+    - The expected brief open→close "flash" was observed and confirmed acceptable (artifact of the onUpdated approach, D004).
 - Remaining:
-  - Awaiting user verification in Chrome: confirm duplicate opens via Ctrl+click / new tab are redirected to the existing tab, that privileged tabs are unaffected, and the expected brief new-tab flash.
+  - None.
 - Notes:
   - `chrome.tabs.onCreated` cannot be used for URL matching (URL not yet set); see D004
-  - There is still a brief visual "flash" of the new tab before it closes
+  - Background duplicates closing silently was accepted over focus-stealing redirect; see D006
   - Cannot reliably distinguish user-initiated from JS-initiated tab opens (see C003)
+
+### T004 — Add auto-dedup enable/disable toggle in the action right-click menu
+
+- Status: in progress
+- Objective: Let the user pause automatic dedup (e.g., to clone tabs intentionally for a presentation) without a keyboard shortcut or popup, while keeping the left-click close behavior unchanged.
+- Scope:
+  - Checkbox menu item ("Automatically close duplicate tabs") in the toolbar icon's right-click menu (`contextMenus` context `action`)
+  - Toggle state in `chrome.storage.session`, auto-enabled by default; browser restart re-enables
+  - `onUpdated` auto-dedup handler checks the state before closing duplicates
+  - Left-click `action.onClicked` close-all behavior unchanged (also closes while paused)
+- Acceptance criteria:
+  - Right-clicking the toolbar icon shows the checkbox item
+  - Unchecking lets newly opened duplicate tabs (including native "タブを複製") survive
+  - Left-click still closes all duplicates and flashes the count badge, regardless of the toggle
+  - Rechecking restores automatic closing
+  - After a full browser restart, the toggle is enabled again
+- Implemented:
+  - `manifest.json` permissions now `tabs`, `storage`, `contextMenus`.
+  - `src/background.js`: `createMenu()` registers the checkbox via `chrome.contextMenus.create({ contexts: ["action"], type: "checkbox" })` on `runtime.onInstalled` (after `removeAll`); `runtime.onStartup` resets the session flag to enabled and updates the item; `contextMenus.onClicked` mirrors the checkbox state into `chrome.storage.session` (`autoDedup`); `tabs.onUpdated` returns early when `isAutoDedupEnabled()` is false.
+- Verification:
+  - `npm test`: 8/8 unit tests pass (T001 logic unchanged).
+  - `node --check` passes on `src/background.js`. `npm run lint` is a no-op placeholder.
+  - Not yet run in Chrome.
+- Remaining:
+  - Awaiting user verification in Chrome per the listed acceptance criteria (first live confirmation that the `action`-context menu appears on right-click of the toolbar icon).
+- Notes:
+  - Intentional-duplicate flow enabled by this task: uncheck → clone tabs (native "タブを複製") → collect for presentation → left-click closes duplicates → recheck (or leave unchecked)
+  - The `contextMenus` "action" context is documented by Chrome but its live behavior in the current Chrome version is unverified by this project
+  - No persistent visual signal while paused (state only visible in the right-click menu); could be revisited if the forgotten-pause risk proves annoying
 
 ## Decisions
 
@@ -179,6 +219,27 @@ Record short project decisions that affect future implementation. Use a separate
   - No bundler; Chrome loads the module graph directly (still complies with D002's "no build step")
 - Related tasks: `T001`, `T002`, `T003`
 
+### D006 — Background duplicates close silently; no focus stealing
+
+- Date: 2026-11-06
+- Status: accepted
+- Decision: Automatic dedup activates the keeper tab only when the closed duplicate was the foreground tab. Background duplicates (e.g. Ctrl+click opens) are simply removed and focus stays where the user was.
+- Rationale: User-accepted during T003 verification (option A): Ctrl+click is itself a background open, so switching to the existing tab would steal focus from the page the user clicked from, which is worse than closing silently.
+- Consequences:
+  - T003 acceptance criterion reworded from "existing tab is focused when duplicate is detected" to focus-on-foreground-only.
+- Related tasks: `T003`
+
+### D007 — Existing-tab navigations are deduped like new tabs (policy P1)
+
+- Date: 2026-11-11
+- Status: accepted
+- Decision: Keep current behavior (no scope split): any tab navigating to a URL an older tab already holds closes and switches to the keeper, including address-bar typing and same-tab link clicks. Blocking same-tab navigation is infeasible in MV3, and per-transition-type handling (webNavigation) was rejected for simplicity.
+- Rationale: User chose "try from simple behavior". Unwanted closes are recoverable via Ctrl+Shift+T (restore the closed tab) and Ctrl+click (background-open the link without foreground dedup).
+- Consequences:
+  - Same-tab link clicks that land on an already-open URL close the reading tab; accepted trade-off.
+  - A later switch to per-transition policies remains possible via C006.
+- Related tasks: `T003`
+
 ## Blocked items
 
 Keep the primary task entry authoritative. This section is a compact index for visibility.
@@ -227,3 +288,56 @@ Items awaiting acceptance, prioritization, or feasibility analysis. They are not
   - `chrome.tabs.onCreated` fires for all new tabs
   - `tab.openerTabId` is set for both Ctrl+Click and `window.open()`
   - May require content scripts and heuristics; reliability uncertain
+
+### C004a — Keyboard-toggle auto-dedup off/on for intentional duplicates
+
+- Origin: User presentation use case (2026-11-06): clone tabs intentionally, collect them in one window, close them later; the extension currently blocks the native "タブを複製" clone.
+- Question: Accept a global pause for automatic dedup via `chrome.commands` keyboard shortcut, with the flag in `chrome.storage.session`/`storage.local` and an icon/badge indication when paused?
+- Possible relationship: `T003`; minimal slice of `C002`
+- Disposition: not accepted (2026-11-11) — superseded by C005, which was accepted as `T004`; the right-click checkbox needs no keybinding management
+- Notes:
+  - User flow: shortcut to disable → clone tabs → shortcut to enable → toolbar click closes the duplicates (works with existing T002)
+  - No browser/extension reload involved; toggle is instant
+  - Cost: user must remember to flip the toggle back on
+  - Manifest change: `commands` entry; no new permission beyond existing ones
+
+### C004b — Popup with toggle + "Deduplicate now" button
+
+- Origin: Agent proposal during C004 discussion (2026-11-06)
+- Question: Should dedup control move into an action popup?
+- Possible relationship: `T002`, `C002`
+- Disposition: not accepted — user stated no interest; adding a popup would also break `chrome.action.onClicked` one-click dedup (T002 UX)
+- Notes:
+  - Rejected 2026-11-06; reopen only if popup/feature growth is later accepted via C002
+
+### C004c — Tab context-menu "clone & bypass" item instead of a mode switch
+
+- Origin: User presentation use case (2026-11-06), agent proposal
+- Question: Accept a `chrome.contextMenus` item at the tab context that calls `chrome.tabs.duplicate()` and adds the new tab id to a one-time ignore set, so auto-dedup skips exactly those clones while the toolbar button still closes all duplicates later?
+- Possible relationship: `T003`; alternative to `C004a`
+- Disposition: not accepted (2026-11-11) — superseded by C005 (`T004`); the global pause covers the presentation flow without a per-clone exemption
+- Notes:
+  - Does not replace Chrome's native "タブを複製" menu item (built-in items cannot be modified by extensions); it adds a separate extension item beside it
+  - No on/off mode state for the user to track; per-clone exemption
+  - Manifest change: add `contextMenus` permission (currently only `tabs`)
+  - Bypassed clones remain eligible for manual dedup via the toolbar button
+
+### C005 — Left-click closes; right-click action-menu checkbox toggles auto-dedup
+
+- Origin: Action-slot discussion (2026-11-11), after discovering Chrome `contextMenus` supports the `action` context (toolbar icon right-click, up to 6 top-level items)
+- Question: Assign left click to close-duplicates (unchanged T002) and a checkbox menu item on the icon's right-click to enable/disable automatic dedup, state in `chrome.storage.session`?
+- Possible relationship: `T002`, `T003`; minimal slice of `C002`
+- Disposition: accepted (2026-11-11) as `T004`
+- Notes:
+  - Chosen over the alternating-click state machine (mode-dependent click needs a stronger paused-state signal) and over C004a/C004c
+  - Auto re-enabled on browser startup by design (safe default)
+
+### C006 — Scope auto-dedup by navigation origin (new tab vs same-tab typed vs same-tab link)
+
+- Origin: Scenario matrix discussion (2026-11-11)
+- Question: Should existing-tab navigations to duplicate URLs behave differently from new-tab opens (P2: dedup only new tabs; P3: distinguish typed vs link via `webNavigation.transitionType`)?
+- Possible relationship: `T003`, `C003`
+- Disposition: not accepted (2026-11-11) — user chose P1 (status quo) for simplicity; recovery procedure is Ctrl+Shift+T then Ctrl+click; recorded as D007
+- Notes:
+  - P3 would add the `webNavigation` permission; "block navigation in place" is not feasible in MV3
+  - Revisit if unexpected same-tab closes prove annoying in practice

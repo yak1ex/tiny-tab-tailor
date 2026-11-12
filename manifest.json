@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "A tiny extension to avoid duplicated tabs",
   "permissions": [
-    "tabs"
+    "tabs",
+    "storage",
+    "contextMenus"
   ],
   "background": {
     "service_worker": "src/background.js",

@@ -6,8 +6,16 @@ import {
   keeperForUrl,
 } from "./dedup.js";
 
+const AUTO_DEDUP_KEY = "autoDedup";
+const MENU_ITEM_ID = "toggle-auto-dedup";
+
 async function getAllTabs() {
   return chrome.tabs.query({});
+}
+
+async function isAutoDedupEnabled() {
+  const result = await chrome.storage.session.get(AUTO_DEDUP_KEY);
+  return result[AUTO_DEDUP_KEY] !== false;
 }
 
 async function closeDuplicateTabs() {
@@ -38,6 +46,29 @@ function flashBadge(count) {
   setTimeout(() => chrome.action.setBadgeText({ text: "" }), 3000);
 }
 
+async function createMenu() {
+  await chrome.contextMenus.removeAll();
+  chrome.contextMenus.create({
+    id: MENU_ITEM_ID,
+    title: "Automatically close duplicate tabs",
+    type: "checkbox",
+    checked: await isAutoDedupEnabled(),
+    contexts: ["action"],
+  });
+}
+
+chrome.runtime.onInstalled.addListener(createMenu);
+
+chrome.runtime.onStartup.addListener(async () => {
+  await chrome.storage.session.set({ [AUTO_DEDUP_KEY]: true });
+  chrome.contextMenus.update(MENU_ITEM_ID, { checked: true }).catch(() => {});
+});
+
+chrome.contextMenus.onClicked.addListener(async (info) => {
+  if (info.menuItemId !== MENU_ITEM_ID) return;
+  await chrome.storage.session.set({ [AUTO_DEDUP_KEY]: info.checked === true });
+});
+
 chrome.action.onClicked.addListener(async () => {
   const result = await closeDuplicateTabs();
   flashBadge(result.closedCount);
@@ -48,6 +79,7 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!changeInfo.url) return;
+  if (!(await isAutoDedupEnabled())) return;
   try {
     await handleTabUrl(tab, changeInfo.url);
   } catch (error) {
